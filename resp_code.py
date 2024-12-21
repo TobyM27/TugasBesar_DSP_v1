@@ -82,6 +82,104 @@ def check_gpu():
             pass
     return "CPU"
 
+def initialize_pose_landmarker():
+    """
+    Menginialisasi pose landmarker yang sudah didownload pada folder 'models'
+    """
+    model_path = download_model() 
+
+    PoseLandmarker = mp.tasks.vision.PoseLandmarker
+    BaseOptions = mp.tasks.BaseOptions
+    PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+    VisionRunningMode = mp.tasks.vision.RunningMode
+    gpu_check = check_gpu()
+
+    # program akan berjalan pada GPU jika tersedia, jika tidak maka akan berjalan pada CPU dari pengguna
+    if gpu_check == "NVIDIA":
+        delegate = BaseOptions.Delegate.GPU
+    else:
+        delegate = BaseOptions.Delegate.CPU
+
+    # Membuat landmarker untuk frame awal
+    options = PoseLandmarkerOptions(
+        base_options=BaseOptions(
+            model_asset_path=model_path,
+            delegate=delegate
+        ),
+        running_mode=VisionRunningMode.LIVE_STREAM,
+        num_poses=1,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
+    return PoseLandmarker.create_from_options(options)
+
+def roi_enhancement(roi):
+    """ 
+    Menambahkan comment pada bagian kode ini
+    """
+    if roi is None or roi.size == 0:
+        raise ValueError("ROI tidak diberikan")
+    
+    # Mengubah ROI menjadi grayscale
+    try:
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        # Mengapllikasikan fungsi CLAHE (Contrast Limited Adaptive Histogram Equalization) pada ROI
+        clahe = cv2.createCLAHE(chiplimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        # Mengaplikasikan Gaussian Blur pada ROI untuk memperkaya fitur tepi-tepi pada gambar pasien
+        enhanced = cv2.GaussianBlur(enhanced, (3, 3), 0)
+        return enhanced
+    except cv2.error as e:
+        raise ValueError(f"Error dalam memproses ROI: {str(e)}")
+    
+def get_initial_roi(image, pose_landmarker, x_size=100, y_size=150, shift_x=0, shift_y=0):
+    """
+    Mengambil ROI dari webcam untuk mendeteksi sinyal respirasi berdasarkan pergerakan posisi bahu pasien
+
+    Args:
+        image (np.ndarray): Frame dari webcam
+        pose_landmarker : MediaPipe pose detector yang sudah didownload
+
+    Returns:
+        tuple: Koordinat ROI (left_x, top_y, right_x, bottom_y)
+    """
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # Membuat gambar MediaPip dari frame pertama
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+
+    # Mendeteksi pose dari frame pertama
+    detection_result = pose_landmarker.detect(mp_image)
+
+    if not detection_result.pose_landmarks:
+        raise ValueError("Tidak ada pose yang terdeteksi pada frame!")
+    
+    landmarks = detection_result.pose_landmarks[0]
+    height, width = image.shape[:2]
+
+    # Mengambil posisi dari bahu kiri dan bahu kanan
+    left_shoulder = landmarks.landmarks[11] 
+    right_shoulder = landmarks.landmarks[12]
+
+    # Menghitung posisi tengah dari bahu kiri dan bahu kanan
+    center_x = int((left_shoulder.x + right_shoulder.x) * width / 2) 
+    center_y = int((left_shoulder.y + right_shoulder.y) * height / 2)
+
+    # Mengaplikasikan shift terhadap titik tengah
+    center_x += shift_x
+    center_y += shift_y
+
+    # Manghitung batasan ROI berdasarkan posisi tengah dan ukuran ROI
+    left_x = max(0, center_x - x_size)
+    right_x = min(width, center_x + x_size)
+    top_y = max(0, center_y - y_size)
+    bottom_y = min(height, center_y + y_size)
+
+    # Mevalidasi ukuran ROI
+    if (right_x - left_x) <= 0 or (bottom_y - top_y) <= 0:
+        raise ValueError("Ukuran ROI tidak valid")
+    return (left_x, top_y, right_x, bottom_y)
+
 def process_respiration_webcam():
     cap = cv2.VideoCapture(0)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -99,14 +197,3 @@ def process_respiration_webcam():
 
     cap.release()
     cv2.destroyAllWindows()
-
-    # menginisialisasi pose landmarker yang telah didownload 
-    """
-    base_options = python.BaseOptions(model_asset_path='models/pose_landmarker.task')
-    options = vision.PoseLandmarkerOptions(
-        base_options=base_options,
-        output_segmentation_masks=True,
-        min_pose_detection_confidence=0.5,
-        min_pose_presence_confidence=0.5,
-        min_tracking_confidence=0.5,)
-    """
