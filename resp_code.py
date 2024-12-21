@@ -8,6 +8,7 @@ import mediapipe as mp
 from glob import glob
 import re
 from datetime import timedelta 
+import time
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -180,20 +181,206 @@ def get_initial_roi(image, pose_landmarker, x_size=100, y_size=150, shift_x=0, s
         raise ValueError("Ukuran ROI tidak valid")
     return (left_x, top_y, right_x, bottom_y)
 
-def process_respiration_webcam():
+def prepare_plot():
+    """
+    Menyiapkan plot untuk menampilkan visualisasi gerakan bahu pasien dengan matplotlib.
+
+    Returns:
+        tuple: Figure dan Axis dari plot
+    """
+    fig = plt.figure(figsize=(4, 3), facecolor='none')
+    ax = fig.add_subplot(111)
+    ax.set_facecolor('none')
+    ax.patch.set_alpha(0.7) # Membuat plot semi-transparan
+    ax.set_xlabel('Waktu (detik)')
+    ax.set_ylabel('Y position(px/pixels)')
+    ax.set_title("Pergerakan Bahu Pasien")
+    ax.grid(True, alpha=1) 
+    return fig, ax
+
+def plot_shoulders_movement(timestamps, y_positions):
+    """
+    Membuat plot untuk pergerakan bahu terhadap indeks waktu.
+
+    Args:
+        timestamps: larik waktu
+        y_positions: larik posisi y bahu 
+    """
+    plt.figure(figsize=(12,6))
+    plt.plot(timestamps, y_positions, label='Average Y Position', color='green')
+    plt.xlabel('Waktu (detik)')
+    plt.ylabel('Y Position (px/pixels)')
+    plt.title('Pergerakan Bahu Pasien per Detik')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+def process_respiration_webcam(pose_landmarker, x_size=300, y_size=250, shift_x=0, shift_y=0, save_video=False):
     cap = cv2.VideoCapture(0)
+
+    # Membatasi ukuran frame webcam menjadi 1280x720
+    width = cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    height = cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    # Menggunakan fps dari webcam
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    while True : 
+    # Menginisialisasi video writer untuk menyimpan video hasil real-time
+    out = None
+    if save_video:
+        output_path = 'data/percobaan_shoulder_track_webcam.mp4'
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWrite(output_path, fourcc, fps, (width, height))
+
+    # Menyiapkan plot 
+    fig,ax = prepare_plot()
+    timestamps = []
+    y_positions = []
+    start_time = time.time()
+
+    # Membaca frame pertama dan mengambil ROI
+    ret, first_frame = cap.read()
+    if not ret:
+        raise ValueError("Could not access webcam!")
+    
+    try: 
+        # Mengambil ROI dari frame pertama sewaktu memulai webcam
+        roi_coords = get_initial_roi(first_frame, pose_landmarker, x_size, y_size, shift_x, shift_y)
+        left_x, top_y, right_x, bottom_y = roi_coords
+
+        # Inisialiasi ROI dengan Optical Flow
+        old_frame = first_frame.copy()
+        old_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
+
+        # Menginisialisasi ROI dan pendeteksi fitur
+        roi = old_gray[top_y:bottom_y, left_x:right_x]
+        features = cv2.goodFeaturesToTrack(roi, maxCorners=60, qualityLevel=0.15, minDistance=3, blockSize=7)
+
+        if features is None:
+            raise ValueError("Tidak ada fitur yang terdeteksi pada ROI!")
+        
+        # Menyesuaikan koordinat fitur ke frame penuh
+        features = np.float32(features) 
+        features[:,:,0] += left_x
+        features[:,:,1] += top_y 
+
+        # LK parameters (Lucas-Kanade)
+        lk_params = dict(
+            winSize=(15, 15),
+            maxLevel=2,
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+        )
+
+        frame_count = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
+            current_time = time.time() - start_time
+
+            if len(features) > 10:
+                # Menghitung Optical Flow
+                new_features, status, error = cv2.calcOpticalFlowPyrLK(old_gray, frame_gray, features, None, **lk_params)
+
+                good_old = features[status == 1]
+                good_new = new_features[status == 1]
+
+                # Mengambar garis untuk menunjukkan pergerakan bahu
+                mask = np.zeros_like(frame)
+                for i, (new, old) in enumerate(zip(good_new, good_old)):
+                    a, b = new.ravel()
+                    c, d = old.ravel()
+                    mask = cv2.line(mask, (int(a), int(b)), (int(c), int(d)), (0, 255, 0), 2)
+                    frame = cv2.circle(frame, (int(a), int(b)), 3, (0, 255, 0), -1)
+                frame = cv2.add(frame,mask)
+
+                # Mengupdate tracking dan grafik plot
+                if len(good_new) > 0:
+                    average_y = np.mean(good_new[:,1])
+                    y_positions.append(average_y)
+                    timestamps.append(current_time)
+                    features = good_new.reshape(-1, 1, 2)
+
+                    # Mengupdate plot 
+                    ax.clear()
+                    ax.set_facecolor('none')
+                    #ax.patch.set_alpha(0.7)
+                    ax.plot(timestamps, y_positions, 'g-', linewidth=2) # Tolong modifikasi line ini
+                    ax.set_xlabel('Waktu (detik)')
+                    ax.set_ylabel('Posisi Y (px/pixels)')
+                    ax.set_title('Pergerakan Bahu Pasien')
+                    ax.grid(True, alpha=0.5)
+                    
+                    # Mengkonversi dan melakukan overlay plot pada frame
+                    fig.canvas.draw()
+                    plot_img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+                    plot_img = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                    plot_height = int(height * 0.3)
+                    plot_width = int(width * 0.3)
+                    plot_img = cv2.resize(plot_img, (plot_width, plot_height))
+                    
+                    # Overlay plot pada frame
+                    y_offset = 20 
+                    x_offset = width - plot_width - 20
+                    frame[y_offset:y_offset + plot_height, x_offset:x_offset + plot_width] = plot_img
+            else:
+                # Melakukan deteksi ulang jika diperlukan
+                roi = frame_gray[top_y:bottom_y, left_x:right_x]
+                features = cv2.goodFeaturesToTrack(roi, 
+                                                   maxCorners=60, 
+                                                   qualityLevel=0.15, 
+                                                   minDistance=3, 
+                                                   blockSize=7)
+                if features is not None:
+                    features = features + np.array([[left_x, top_y]], dtype=np.float32)
+            
+            # Mengambar ROI pada frame
+            cv2.rectangle(frame, (left_x, top_y), (right_x, bottom_y), (0, 0, 255), 2)
+
+            # Menampilkan frame 
+            cv2.imshow('Pendeteksi Bahu', frame) 
+
+            # Menyimpan frame apabila diminta untuk disimpan
+            if out is not None:
+                out.write(frame)
+            
+            # Mengupdate hasil tracking
+            old_gray = frame_gray.copy()
+            frame_count += 1
+
+            # Menghentikan program apabila tombol 'q' ditekan
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        # Membersihkan frame cv2
+        cap.release()
+        if out is not None:
+            out.release()
+        cv2.destroyAllWindows()
+        plt.close(fig)
+        return timestamps, y_positions
+    except Exception as e:
+        print(f"error during tahap pemrosesan webcam: {str(e)}")
+        cap.release()
+        if out is not None:
+            out.release()
+        cv2.destroyAllWindows()
+        raise
+    """
+    respiration_signal = []
+    while cap.isOpened(): 
         ret, frame = cap.read()
         if not ret:
             break
+        # Membalikan frame webcam agar tampak seperti cermin
+        frame = cv2.flip(frame, 1)
         # Convert frame to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         cv2.imshow('Frame', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
     cap.release()
     cv2.destroyAllWindows()
+    """
