@@ -20,9 +20,11 @@ matplotlib.use('Agg')
 
 # menginstall model pose landmarker dari MediaPipe. 
 def download_model():
+    """
+    Menambahkan comment pada bagian kode ini 
+    """
     model_dir = "models"
     os.makedirs(model_dir, exist_ok=True)
-
     url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
     filename = os.path.join(model_dir, "pose_landmarker.task")
 
@@ -56,5 +58,55 @@ def download_model():
         if os.path.exists(filename):
             os.remove(filename) 
 
-#memanggil fungsi download_model - menguji fungsi download_model
-download_model()
+def check_gpu():
+    """
+    menambahkan comment 
+    """
+    system = platform.system()
+    print(f"System yang sedang digunakan : {system}")
+    # Memeriksa apabila ada GPU yang tersedia pada laptop pengguna
+    if system == "Linux" or system == "Windows":
+        try:
+            nvidia_output = subprocess.check_output(['nvidia-smi']).decode('utf-8')
+            return "NVIDIA"
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return "CPU"
+    # Memeriksa apabila laptop pengguna sedang menggunakan Apple dengan arsitektur MLX
+    elif system == "Darwin":
+        try:
+            cpu_info = subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string']).decode('utf-8').strip()
+            print(f"CPU yang digunakan: {cpu_info}")
+            if "Apple" in cpu_info:
+                return "MLX"
+        except subprocess.CalledProcessError:
+            pass
+    return "CPU"
+
+def process_respiration_webcam():
+    cap = cv2.VideoCapture(0)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    while True : 
+        ret, frame = cap.read()
+        if not ret:
+            break
+        # Convert frame to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        cv2.imshow('Frame', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+    # menginisialisasi pose landmarker yang telah didownload 
+    """
+    base_options = python.BaseOptions(model_asset_path='models/pose_landmarker.task')
+    options = vision.PoseLandmarkerOptions(
+        base_options=base_options,
+        output_segmentation_masks=True,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
+        min_tracking_confidence=0.5,)
+    """
