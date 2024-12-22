@@ -1,14 +1,68 @@
 import sys
 import numpy as np
 import cv2
-import time
+import os
+import requests
+import tqdm
 import mediapipe as mp
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QGridLayout
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QImage, QPixmap
 import pyqtgraph as pg
 from scipy.signal import butter, filtfilt, find_peaks
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 from utils.heart_rate import cpu_POS
+
+def download_model_face_detection():
+    """
+    Mengunduh model pose landmarker dari MediaPipe.
+    Model ini digunakan untuk mendeteksi pose tubuh dalam video.
+    """
+    # Create models directory if it doesn't exist
+    model_dir = "model"
+    os.makedirs(model_dir, exist_ok=True)
+    
+    url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite"
+    filename = os.path.join(model_dir, "face_detector.task")
+    
+    # Check if file already exists and is not empty
+    if os.path.exists(filename) and os.path.getsize(filename) > 0:
+        print(f"Model file {filename} already exists and is valid, skipping download.")
+        return filename
+    
+    # Download with progress bar
+    try:
+        print(f"Downloading model to {filename}...")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024
+        
+        with open(filename, 'wb') as f, tqdm(
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as pbar:
+            for data in response.iter_content(block_size):
+                size = f.write(data)
+                pbar.update(size)
+        
+        # Verify downloaded file
+        if os.path.getsize(filename) == 0:
+            raise ValueError("Downloaded file is empty")
+            
+        print("Download completed successfully!")
+        return filename
+        
+    except Exception as e:
+        print(f"Error downloading the model: {e}")
+        if os.path.exists(filename):
+            os.remove(filename)  # Clean up partial download
+        raise
+
 
 class HeartRateMonitor(QWidget):
     def __init__(self):
@@ -17,8 +71,7 @@ class HeartRateMonitor(QWidget):
         self.cap = cv2.VideoCapture(0)
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.r_signal, self.g_signal, self.b_signal = [], [], []
-        self.mp_face_detection = mp.solutions.face_detection
-        self.face_detection = self.mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        self.face_detector = self.initialize_face_detector()
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(1000 // int(self.fps))
@@ -48,20 +101,27 @@ class HeartRateMonitor(QWidget):
 
         self.setLayout(main_layout)
 
+    def initialize_face_detector(self):
+        model_path = download_model_face_detection()
+        base_options = python.BaseOptions(model_asset_path=model_path)
+        options = vision.FaceDetectorOptions(base_options=base_options)
+        return vision.FaceDetector.create_from_options(options)
+
     def update_frame(self):
         ret, frame = self.cap.read()
         if not ret:
             return
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.face_detection.process(frame_rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+        detection_result = self.face_detector.detect(mp_image)
 
-        if results.detections:
-            for detection in results.detections:
-                bbox = detection.location_data.relative_bounding_box
+        if detection_result.detections:
+            for detection in detection_result.detections:
+                bbox = detection.bounding_box
                 h, w, _ = frame_rgb.shape
-                x, y = int(bbox.xmin * w), int(bbox.ymin * h)
-                width, height = int(bbox.width * w), int(bbox.height * h)
+                x, y = int(bbox.origin_x), int(bbox.origin_y)
+                width, height = int(bbox.width), int(bbox.height)
 
                 forehead_x = x + width // 4
                 forehead_y = y // 2 + 55
