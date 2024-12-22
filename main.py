@@ -144,7 +144,8 @@ class HeartRateMonitor(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DirectShow backend
+        video_backend = cv2.CAP_DSHOW if sys.platform == 'win32' else cv2.CAP_AVFOUNDATION # Menggunakan CAP_DSHOW untuk Windows dan CAP_AVFOUNDATION untuk macOS
+        self.cap = cv2.VideoCapture(0, video_backend)  
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         if self.fps == 0:
             self.fps = 30  # Set a default FPS value if the camera does not provide it
