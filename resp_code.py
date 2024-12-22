@@ -18,11 +18,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+from scipy.signal import butter, filtfilt, find_peaks
 
 # menginstall model pose landmarker dari MediaPipe. 
 def download_model():
     """
-    Menambahkan comment pada bagian kode ini 
+    Mengunduh model pose landmaker dari MediaPipe
+    Model pose landmarker akan digunakan untuk mendeteksi pose dari pasien
     """
     model_dir = "models"
     os.makedirs(model_dir, exist_ok=True)
@@ -34,7 +36,7 @@ def download_model():
         print(f"Model file {filename} sudah ada. Melewati proses download.")
         return filename
     
-    # menampilkan proses download dengan tqdm
+    # menampilkan proses download dengan library tqdm
     try:
         print(f"Mengunduh model ke direktori {filename}...")
         response = requests.get(url, stream=True)
@@ -83,41 +85,15 @@ def check_gpu():
             pass
     return "CPU"
 
-def initialize_pose_landmarker():
-    """
-    Menginialisasi pose landmarker yang sudah didownload pada folder 'models'
-    """
-    model_path = download_model() 
-
-    PoseLandmarker = mp.tasks.vision.PoseLandmarker
-    BaseOptions = mp.tasks.BaseOptions
-    PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-    VisionRunningMode = mp.tasks.vision.RunningMode
-    gpu_check = check_gpu()
-
-    # program akan berjalan pada GPU jika tersedia, jika tidak maka akan berjalan pada CPU dari pengguna
-    if gpu_check == "NVIDIA":
-        delegate = BaseOptions.Delegate.GPU
-    else:
-        delegate = BaseOptions.Delegate.CPU
-
-    # Membuat landmarker untuk frame awal
-    options = PoseLandmarkerOptions(
-        base_options=BaseOptions(
-            model_asset_path=model_path,
-            delegate=delegate
-        ),
-        running_mode=VisionRunningMode.LIVE_STREAM,
-        num_poses=1,
-        min_pose_detection_confidence=0.5,
-        min_pose_presence_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
-    return PoseLandmarker.create_from_options(options)
-
 def roi_enhancement(roi):
     """ 
-    Menambahkan comment pada bagian kode ini
+    Dengan fungsi ini, kualitas Region of Interest (ROI) dapat ditingkatkan dengan teknik pemrosesan gambar. 
+
+    Args:
+        roi (np.ndarray): ROI dalam dari frame video 
+
+    Returns: 
+        numpy.ndarray: ROI yang telah ditingkatkan kualitasnya
     """
     if roi is None or roi.size == 0:
         raise ValueError("ROI tidak diberikan")
@@ -134,18 +110,23 @@ def roi_enhancement(roi):
     except cv2.error as e:
         raise ValueError(f"Error dalam memproses ROI: {str(e)}")
     
-def get_initial_roi(image, pose_landmarker, x_size=100, y_size=150, shift_x=0, shift_y=0):
+def get_respiration_initial_roi(image, pose_landmarker, x_size=100, y_size=150, shift_x=0, shift_y=0):
     """
-    Mengambil ROI dari webcam untuk mendeteksi sinyal respirasi berdasarkan pergerakan posisi bahu pasien
+    Mengambil ROI dari webcam untuk mendeteksi sinyal respirasi berdasarkan pergerakan posisi bahu pasien.
 
     Args:
         image (np.ndarray): Frame dari webcam
-        pose_landmarker : MediaPipe pose detector yang sudah didownload
+        pose_landmarker (task): MediaPipe pose detector yang sudah didownload
+        x_size (int): Ukuran ROI pada sumbu x
+        y_size (int): Ukuran ROI pada sumbu y
+        shift_x (int): Pergeseran ROI pada sumbu x (dimana nilai positif akan menggeser ROI ke kanan dan sebaliknya)
+        shift_y (int): Pergeseran ROI pada sumbu y (dimana nilai positif akan menggeser ROI ke bawah dan sebaliknya)
 
     Returns:
         tuple: Koordinat ROI (left_x, top_y, right_x, bottom_y)
     """
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    height, width = image.shape[:2]
     # Membuat gambar MediaPip dari frame pertama
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
 
@@ -156,7 +137,6 @@ def get_initial_roi(image, pose_landmarker, x_size=100, y_size=150, shift_x=0, s
         raise ValueError("Tidak ada pose yang terdeteksi pada frame!")
     
     landmarks = detection_result.pose_landmarks[0]
-    height, width = image.shape[:2]
 
     # Mengambil posisi dari bahu kiri dan bahu kanan
     left_shoulder = landmarks.landmarks[11] 
@@ -215,22 +195,44 @@ def plot_shoulders_movement(timestamps, y_positions):
     plt.grid(True)
     plt.show()
 
-def process_respiration_webcam(pose_landmarker, x_size=300, y_size=250, shift_x=0, shift_y=0, save_video=False):
+def bandpass_filter(signal, lowcut, highcut, fs, order=5): # panggil fungsi ini dari program main.py dari real-time-heart-rate-detection
+    """
+    Menerapkan filter bandpass Butterworth pada sinyal input.
+
+    Args:
+        signal (np.ndarray): Sinyal input.
+        lowcut (float): Frekuensi cut-off rendah dalam Hz.
+        highcut (float): Frekuensi cut-off tinggi dalam Hz.
+        fs (float): Frekuensi sampling dalam Hz.
+        order (int): Orde dari filter.
+
+    Returns:
+        np.ndarray: Sinyal yang telah difilter.
+    """
+    nyquist = 0.5 * fs
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    b, a = butter(order, [low, high], btype='band')
+    y = filtfilt(b, a, signal)
+    return y
+
+def process_respiration_webcam(pose_landmarker,x_size=300, y_size=250, shift_x=0, shift_y=0, save_video=False):
     cap = cv2.VideoCapture(0)
-
+    fps = cap.get(cv2.CAP_PROP_FPS) # Mengambil fps dari webcam
     # Membatasi ukuran frame webcam menjadi 1280x720
-    width = cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    height = cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-    # Menggunakan fps dari webcam
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280))
+    height = int(cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720))
 
     # Menginisialisasi video writer untuk menyimpan video hasil real-time
-    out = None
     if save_video:
-        output_path = 'data/percobaan_shoulder_track_webcam.mp4'
+        data_directory = 'data'
+        output_dir = os.path.join(data_directory, 'respiration_output')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, 'percobaan_shoulder_track_webcam.mp4')
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWrite(output_path, fourcc, fps, (width, height))
+
+    respiration_signal = [] # Inisialisasi sinyal respirasi
 
     # Menyiapkan plot 
     fig,ax = prepare_plot()
@@ -241,11 +243,11 @@ def process_respiration_webcam(pose_landmarker, x_size=300, y_size=250, shift_x=
     # Membaca frame pertama dan mengambil ROI
     ret, first_frame = cap.read()
     if not ret:
-        raise ValueError("Could not access webcam!")
+        raise ValueError("Tidak dapat mengakses webcam")
     
     try: 
         # Mengambil ROI dari frame pertama sewaktu memulai webcam
-        roi_coords = get_initial_roi(first_frame, pose_landmarker, x_size, y_size, shift_x, shift_y)
+        roi_coords = get_respiration_initial_roi(first_frame, pose_landmarker, x_size, y_size, shift_x, shift_y)
         left_x, top_y, right_x, bottom_y = roi_coords
 
         # Inisialiasi ROI dengan Optical Flow
@@ -272,7 +274,9 @@ def process_respiration_webcam(pose_landmarker, x_size=300, y_size=250, shift_x=
         )
 
         frame_count = 0
+        start_time = time.time()
 
+        # Looping untuk mendeteksi pergerakan bahu pasien hingga program dihentikan (pengguna menekan q)
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -325,6 +329,17 @@ def process_respiration_webcam(pose_landmarker, x_size=300, y_size=250, shift_x=
                     y_offset = 20 
                     x_offset = width - plot_width - 20
                     frame[y_offset:y_offset + plot_height, x_offset:x_offset + plot_width] = plot_img
+
+                    # Menghitung sinyal respirasi
+                    roi = frame[top_y:bottom_y, left_x:right_x]
+                    average_intensity = np.mean(roi[:, :, 1])
+                    respiration_signal.append(average_intensity)
+
+                    # Mengambil sampel sinyal respirasi setiap 5 detik
+                    if len(respiration_signal) >= fps * 5:
+                    # Memproses sinyal respirasi
+                        filtered_signal = bandpass_filter(respiration_signal, 0.75, 3.0, fps, order=5)
+                        cv2.putText(frame, f"Respiration Intensity: {filtered_signal[-1]:.2f}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
             else:
                 # Melakukan deteksi ulang jika diperlukan
                 roi = frame_gray[top_y:bottom_y, left_x:right_x]
@@ -342,45 +357,84 @@ def process_respiration_webcam(pose_landmarker, x_size=300, y_size=250, shift_x=
             # Menampilkan frame 
             cv2.imshow('Pendeteksi Bahu', frame) 
 
-            # Menyimpan frame apabila diminta untuk disimpan
-            if out is not None:
-                out.write(frame)
+            # Menyimpan frame 
+            out.write(frame)
             
             # Mengupdate hasil tracking
             old_gray = frame_gray.copy()
             frame_count += 1
-
+                
             # Menghentikan program apabila tombol 'q' ditekan
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
         # Membersihkan frame cv2
         cap.release()
-        if out is not None:
-            out.release()
+        out.release
         cv2.destroyAllWindows()
         plt.close(fig)
+        # Mengembalikan hasil sinyal respirasi
         return timestamps, y_positions
+    
     except Exception as e:
         print(f"error during tahap pemrosesan webcam: {str(e)}")
         cap.release()
-        if out is not None:
-            out.release()
+        out.release()
         cv2.destroyAllWindows()
-        raise
-    """
-    respiration_signal = []
-    while cap.isOpened(): 
-        ret, frame = cap.read()
-        if not ret:
-            break
-        # Membalikan frame webcam agar tampak seperti cermin
-        frame = cv2.flip(frame, 1)
-        # Convert frame to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        cv2.imshow('Frame', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    cap.release()
-    cv2.destroyAllWindows()
+def main():
     """
+    Fungsi utama dari program respiration. 
+    Di tahap ini, program menginisialisasi model pose landmark dan memulai webcam untuk mendeteksi gerakan bahu pasien.
+    """
+    detector_image = None
+    # Mengisiasi model landmarker
+    try: 
+        # Mengunduh model pose landmarker dari MediaPipe apabila belum ada. Jika ada, maka model akan langsung diinisiasi
+        model_path = download_model()
+
+        # Mempersiapan pose landmarker
+        PoseLandmarker = mp.tasks.vision.PoseLandmarker
+        BaseOptions = mp.tasks.BaseOptions
+        PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+        VisionRunningMode = mp.tasks.vision.RunningMode
+        gpu_check = check_gpu()
+
+        # program akan berjalan pada GPU jika tersedia, jika tidak maka akan berjalan pada CPU dari pengguna
+        if gpu_check == "NVIDIA":
+            delegate = BaseOptions.Delegate.GPU
+        else:
+            delegate = BaseOptions.Delegate.CPU
+
+        # Membuat landmarker untuk frame awal
+        options = PoseLandmarkerOptions(
+            base_options=BaseOptions(
+                model_asset_path=model_path,
+                delegate=delegate
+            ),
+            running_mode=VisionRunningMode.IMAGE,
+            num_poses=1,
+            min_pose_detection_confidence=0.5,
+            min_pose_presence_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
+        # Membuat landmarker dari opsi yang sudah diinisiasi
+        respiration_detector = PoseLandmarker.create_from_options(options)
+
+        # Memulai proses deteksi gerakan bahu pasien secara real time
+        timestamps, y_positions = process_respiration_webcam(respiration_detector,
+                                                             x_size=300, 
+                                                             y_size=250, 
+                                                             shift_x=0, 
+                                                             shift_y=0, 
+                                                             save_video=False)
+        print("Done!")
+    except Exception as e:
+        print("Terdeteksi error: ", str(e))
+        raise
+    finally:
+        if respiration_detector:
+            respiration_detector.close()
+
+if __name__ == "__main__":
+    main()
