@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import cv2
 import os
+import subprocess
 import requests
 from tqdm import tqdm
 import mediapipe as mp
@@ -9,6 +10,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QGridLay
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QImage, QPixmap
 import pyqtgraph as pg
+import platform
 from scipy.signal import butter, filtfilt, find_peaks
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -104,8 +106,36 @@ def download_model_pose_detection():
             os.remove(filename)
         raise
 
+## Problem specific for Mac
+def check_gpu():
+    """
+    Memeriksa ketersediaan GPU pada sistem.
+    Returns:
+        str: "NVIDIA" untuk GPU NVIDIA, "MLX" untuk Apple Silicon, atau "CPU" jika tidak ada GPU
+    """
+    system = platform.system()
+    print(f"System: {system}")
+    # Check for NVIDIA GPU
+    if system == "Linux" or system == "Windows":
+        try:
+            nvidia_output = subprocess.check_output(['nvidia-smi']).decode('utf-8')
+            return "NVIDIA"
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return "CPU"
 
-def get_initial_roi(image, landmarker, x_size=150, y_size=30, shift_x=0, shift_y=-30):
+    # Check for Apple MLX
+    elif system == "Darwin":  # macOS
+        try:
+            cpu_info = subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string']).decode('utf-8').strip()
+            print(f"CPU: {cpu_info}")
+            if "Apple" in cpu_info:  # This indicates Apple Silicon (M1/M2/M3)
+                return "MLX"
+        except subprocess.CalledProcessError:
+            pass
+    return "CPU"
+
+## The length to be around should width to ensure the landmarks are detected and can proceed to optical flow 
+def get_initial_roi(image, landmarker, x_size=100, y_size=30, shift_x=0, shift_y=-30):
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     height, width = image.shape[:2]
     
@@ -144,7 +174,7 @@ class HeartRateMonitor(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DirectShow backend
+        self.cap = cv2.VideoCapture(0)  # Use DirectShow backend
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         if self.fps == 0:
             self.fps = 30  # Set a default FPS value if the camera does not provide it
@@ -196,8 +226,18 @@ class HeartRateMonitor(QWidget):
 
     def initialize_face_detector(self):
         model_path = download_model_face_detection()
-        base_options = python.BaseOptions(model_asset_path=model_path)
-        options = vision.FaceDetectorOptions(base_options=base_options)
+        BaseOptions = mp.tasks.BaseOptions
+        gpu_checked = check_gpu()
+        if gpu_checked == "NVIDIA":
+            delegate = python.BaseOptions.Delegate.GPU
+        else:
+            delegate = python.BaseOptions.Delegate.CPU
+        options = vision.FaceDetectorOptions(
+            base_options=BaseOptions(
+                model_asset_path=model_path,
+                delegate=delegate
+            )
+        )
         return vision.FaceDetector.create_from_options(options)
 
     def initialize_pose_landmarker(self):
@@ -205,10 +245,17 @@ class HeartRateMonitor(QWidget):
         BaseOptions = mp.tasks.BaseOptions
         PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
         VisionRunningMode = mp.tasks.vision.RunningMode
+        gpu_checked = check_gpu()
+
+        if gpu_checked == "NVIDIA":
+            delegate = BaseOptions.Delegate.GPU
+        else:
+            delegate = BaseOptions.Delegate.CPU
         
         options_image = PoseLandmarkerOptions(
             base_options=BaseOptions(
                 model_asset_path=model_path,
+                delegate = delegate
             ),
             running_mode=VisionRunningMode.IMAGE,
             num_poses=1,
@@ -290,7 +337,7 @@ class HeartRateMonitor(QWidget):
             peak_intervals = np.diff(peaks) / self.fps
             heart_rate = 60.0 / np.mean(peak_intervals) if len(peak_intervals) > 0 else 0
 
-            self.hr_label.setText(f'Heart Rate: {heart_rate:.2f} BPM')
+            self.hr_label.setText(f'Heart Rate: {heart_rate:.2f} BPM (Beat Per Minute)')
             self.plot_curve_hr.setData(smoothed_signal)
             self.r_signal, self.g_signal, self.b_signal = [], [], []
 
@@ -304,7 +351,7 @@ class HeartRateMonitor(QWidget):
             resp_intervals = np.diff(resp_peaks) / self.fps
             respiration_rate = 60.0 / np.mean(resp_intervals) if len(resp_intervals) > 0 else 0
 
-            self.resp_label.setText(f'Respiration Rate: {respiration_rate:.2f} BPM')
+            self.resp_label.setText(f'Respiration Rate: {respiration_rate:.2f} BPM (Breath Per Minute)')
             self.plot_curve_resp.setData(smoothed_resp_signal)
             self.resp_signal = []
 
@@ -319,7 +366,7 @@ class HeartRateMonitor(QWidget):
         old_frame = frame.copy()
         old_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
         roi_chest = old_gray[self.top_y:self.bottom_y, self.left_x:self.right_x]
-        self.features = cv2.goodFeaturesToTrack(roi_chest, maxCorners=60, qualityLevel=0.15, minDistance=5, blockSize=5)
+        self.features = cv2.goodFeaturesToTrack(roi_chest, maxCorners=50, qualityLevel=0.2, minDistance=5, blockSize=3)
         if self.features is None:
             raise ValueError("No features found to track!")
         self.features = np.float32(self.features)
