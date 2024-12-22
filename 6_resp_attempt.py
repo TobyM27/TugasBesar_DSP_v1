@@ -24,7 +24,7 @@ def download_model():
     Model ini digunakan untuk mendeteksi pose tubuh dalam video.
     """
     # Create models directory if it doesn't exist
-    model_dir = "attachment"
+    model_dir = "model"
     os.makedirs(model_dir, exist_ok=True)
     
     url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
