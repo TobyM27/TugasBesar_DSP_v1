@@ -1,7 +1,6 @@
 #------- Library MediaPipe dan OpenCV untuk Video Processing----------#
-mediapipe>=0.8.9
+mediapipe==0.10.18
 opencv-python>=4.5.0
-mediapipe-tasks>=0.1.0
 
 #------- Library untuk Audio Processing ----------#
 numpy>=1.26.0
@@ -10,10 +9,17 @@ librosa>=0.9.0
 soundfile>=0.10.3
 
 #------- Library untuk GUI Development ----------#
-pyqt5>=5.15.0
-pyqtgraph>=0.13.0
+PyQt5==5.15.11
+pyqtgraph==0.13.7
+
+#------- Versi Spesifik Komponen Qt ----------#
+PyQt5-Qt5==5.15.11        # Komponen inti Qt5
+PyQt5_sip==12.16.1       # Python bindings untuk Qt
 
 #------- Library untuk Sistem dan Utility ----------#
 platformdirs>=2.5.0
-tqdm>=4.64.0
-requests>=2.26.0
+tqdm==4.67.1
+requests==2.32.3
+
+#------- Library untuk Tokenizing dan Parsing Python ----------#
+asttokens==3.0.0
