@@ -1,0 +1,19 @@
+#------- Library MediaPipe dan OpenCV untuk Video Processing----------#
+mediapipe>=0.8.9
+opencv-python>=4.5.0
+mediapipe-tasks>=0.1.0
+
+#------- Library untuk Audio Processing ----------#
+numpy>=1.26.0
+scipy>=1.8.0
+librosa>=0.9.0
+soundfile>=0.10.3
+
+#------- Library untuk GUI Development ----------#
+pyqt5>=5.15.0
+pyqtgraph>=0.13.0
+
+#------- Library untuk Sistem dan Utility ----------#
+platformdirs>=2.5.0
+tqdm>=4.64.0
+requests>=2.26.0
