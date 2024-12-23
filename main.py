@@ -282,7 +282,9 @@ class HeartRateMonitor(QWidget):
 
     def moving_average(self, signal, window_size):
         """
-        I'm forgor about this
+        Metode ini berfungsi untuk melakukan moving average pada sinyal (melihat tren sinyal rppg dan resp)
+        signal: array = sinyal target
+        window_size: int = ukuran window untuk moving average
         """
         return np.convolve(signal, np.ones(window_size)/window_size, mode='valid')
 
