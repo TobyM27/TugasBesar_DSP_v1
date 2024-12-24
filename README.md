@@ -70,17 +70,76 @@ Berikut adalah daftar library Python yang digunakan dalam proyek ini, beserta fu
 
 ---
 
-### How to run this
+## Logbook
 
-Dengan asumsi bahwa sudah mempunyai environment manager seperti conda. maka buat environment baru seperti ini. Clone / fork lalu jalankan perintah ini.
+### Minggu 1
+
+- Inisialisasi github repo dan github project management untuk manajemen tugas besar "Digital Signal Processing"
+- Pembagian tugas antara Arsyadana, Fransiskus, dan Tobyanto
+
+### Minggu 2
+
+- Pembuatan branch baru pengembangan RPPG (dengan nama branch ambatulearn).
+  - Membuat file `pos.ipynb` yang sudah diisikan dengan pemanggilan library dan fungsi download model dari mediapipe.
+
+### Minggu 3
+
+- Pembuatan branch baru pengembangan respiration (dengan nama branch respiration_code).
+  - Membuat file `resp_code.py` yang sudah diisikan dengan pemanggilan library dan fungsi download model dari mediapipe.
+  - Menjalankan kode `resp_code.py` untuk mendownload model dari mediapipe.
+
+### Minggu 4
+
+- Pembuatan project overleaf untuk laporan tugas besar DSP.
+- Pembuatan GUI untuk menampilkan sinyal detak jantung dan pernafasan secara real-time (dengan Library PyQt).
+- Penggabungan modul antara RPPG dan Respiration untuk menampilkan sinyal detak jantung dan pernafasan secara real-time.
+- Refactor kode untuk memisahkan fungsi-fungsi yang berbeda ke dalam file yang berbeda dan membuat docstring pada tiap fungsi.
+- Pembuatan requirements.txt dan environment.yml untuk memudahkan instalasi library yang dibutuhkan.
+
+## How to run this
+
+Dengan asumsi bahwa Anda sudah mempunyai environment manager seperti conda. maka buat environment baru seperti ini. Clone / fork lalu jalankan perintah ini.
+
+### 2. Dengan environment.yml
 
 ```yaml
 conda env create -f environment.yml
 ```
 
-Lalu bukan environemt yang sudah dibuat sebelumnya dengan, dan jalakan program main
+Lalu bukan environment yang sudah dibuat sebelumnya dengan.
 
 ```yaml
 conda activate real_time_hr_respiration
-(real_time_hr_respiration) python main.py
+```
+
+Lalu jalankan perintah ini untuk menjalankan program.
+
+```yaml
+python main.py
+```
+
+### 2. Dengan requirements.txt
+
+Atau jika Anda mengalami masalah dalam menggunakan environment.yml, anda bisa menggunakan requirements.txt. Jalankan perintah ini.
+
+```yaml
+conda create -n real_time_hr_respiration python=3.10.16
+```
+
+Lalu buka environment yang sudah dibuat sebelumnya dengan
+
+```yaml
+conda activate real_time_hr_respiration
+```
+
+Jalankan perintah ini untuk menginstall library yang dibutuhkan.
+
+```yaml
+pip install -r requirements.txt
+```
+
+Lalu jalankan perintah ini untuk menjalankan program.
+
+```yaml
+python main.py
 ```
