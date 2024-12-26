@@ -1,3 +1,7 @@
+# Tugas Besar Mata Kuliah Digital Processing Signal (IF3024)
+
+## Dosen Pengampu: **Martin Clinton Tosima Manullang, S.T., M.T..**
+
 # **Real Time HR & Resp Signal**
 
 <p align="center">
